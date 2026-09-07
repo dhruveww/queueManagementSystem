@@ -1,0 +1,49 @@
+{
+  "name": "baari",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Baari — WhatsApp-first virtual queuing and floor management for Indian restaurants.",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "db:push": "supabase db push",
+    "db:reset": "supabase db reset",
+    "db:types": "supabase gen types typescript --local > src/lib/supabase/database.types.ts",
+    "seed": "tsx scripts/seed.ts"
+  },
+  "dependencies": {
+    "@react-three/drei": "^10.7.6",
+    "@react-three/fiber": "^9.3.0",
+    "@supabase/ssr": "^0.7.0",
+    "@supabase/supabase-js": "^2.58.0",
+    "@types/qrcode": "^1.5.6",
+    "clsx": "^2.1.1",
+    "date-fns": "^4.1.0",
+    "lucide-react": "^0.544.0",
+    "next": "^15.5.4",
+    "qrcode": "^1.5.4",
+    "razorpay": "^2.9.6",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "recharts": "^3.2.1",
+    "tailwind-merge": "^3.3.1",
+    "three": "^0.180.0",
+    "zod": "^4.1.11"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.1.13",
+    "@types/node": "^24.5.2",
+    "@types/react": "^19.1.13",
+    "@types/react-dom": "^19.1.9",
+    "@types/three": "^0.180.0",
+    "tailwindcss": "^4.1.13",
+    "tsx": "^4.20.5",
+    "typescript": "^5.9.2",
+    "vitest": "^3.2.4"
+  }
+}

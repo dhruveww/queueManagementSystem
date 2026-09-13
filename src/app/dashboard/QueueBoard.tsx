@@ -54,8 +54,22 @@ export function QueueBoard(props: Props) {
     [tables, groups, props.zones, props.occupiedSince],
   );
 
-  const freeCount = tables.filter((t) => t.status === "free" && !t.merged_group_id).length
-    + groups.filter((g) => g.status === "free").length;
+  // Counted over seatable units: a merged group is one table to give away, not
+  // one per member.
+  const occupancy = useMemo(() => {
+    const statuses = [
+      ...tables.filter((t) => !t.merged_group_id).map((t) => t.status),
+      ...groups.map((g) => g.status),
+    ];
+    const count = (s: TableStatus) => statuses.filter((x) => x === s).length;
+    return {
+      total: statuses.length,
+      free: count("free"),
+      occupied: count("occupied"),
+      clearing: count("clearing"),
+      reserved: count("reserved"),
+    };
+  }, [tables, groups]);
 
   function flash(text: string, bad = false) {
     setToast({ text, bad });
@@ -152,11 +166,37 @@ export function QueueBoard(props: Props) {
 
       {/* ------------------------------------------------------- tables */}
       <aside>
-        <div className="mb-3 flex items-center gap-3">
-          <h2 className="text-xl font-semibold text-white">Tables</h2>
-          <span className="rounded-full bg-status-free/15 px-2.5 py-0.5 text-sm font-semibold text-status-free tnum">
-            {freeCount} free
-          </span>
+        <div className="mb-3">
+          <div className="flex items-center gap-3">
+            <h2 className="text-xl font-semibold text-white">Tables</h2>
+            <span className="ml-auto text-sm text-ink-400 tnum">
+              {occupancy.occupied}/{occupancy.total} in use
+            </span>
+          </div>
+
+          {/* A single bar reads faster than three numbers when the host is
+              deciding whether to keep quoting waits. */}
+          <div className="mt-2 flex h-2 overflow-hidden rounded-full bg-ink-800">
+            <div
+              className="bg-status-occupied"
+              style={{ width: `${pct(occupancy.occupied, occupancy.total)}%` }}
+            />
+            <div
+              className="bg-status-clearing"
+              style={{ width: `${pct(occupancy.clearing, occupancy.total)}%` }}
+            />
+          </div>
+
+          <div className="mt-1.5 flex flex-wrap gap-x-3 gap-y-1 text-[11px]">
+            <Key color="var(--color-status-free)" label={`${occupancy.free} free`} />
+            <Key color="var(--color-status-occupied)" label={`${occupancy.occupied} occupied`} />
+            {occupancy.clearing > 0 && (
+              <Key color="var(--color-status-clearing)" label={`${occupancy.clearing} being cleared`} />
+            )}
+            {occupancy.reserved > 0 && (
+              <Key color="var(--color-status-reserved)" label={`${occupancy.reserved} reserved`} />
+            )}
+          </div>
         </div>
 
         <TableList
@@ -360,14 +400,39 @@ function TableList({
   onSeat: (target: { tableId?: string; groupId?: string }) => Promise<void>;
   onFlash: (t: string, bad?: boolean) => void;
 }) {
-  const byFloor = floors.map((f) => ({
-    floor: f,
-    tables: tables.filter((t) => t.floor_id === f.id && !t.merged_group_id),
-    groups: groups.filter((g) => g.floor_id === f.id),
-  }));
+  // Host desks usually work one floor at a time; on a multi-floor outlet the
+  // full list is too long to scan mid-service.
+  const [floorFilter, setFloorFilter] = useState<string>("all");
+
+  const byFloor = floors
+    .filter((f) => floorFilter === "all" || f.id === floorFilter)
+    .map((f) => ({
+      floor: f,
+      tables: tables.filter((t) => t.floor_id === f.id && !t.merged_group_id),
+      groups: groups.filter((g) => g.floor_id === f.id),
+    }));
 
   return (
     <div className="space-y-4">
+      {floors.length > 1 && (
+        <select
+          value={floorFilter}
+          onChange={(e) => setFloorFilter(e.target.value)}
+          aria-label="Filter tables by floor"
+          className="w-full rounded-lg border border-ink-800 bg-ink-950 px-3 py-2 text-sm text-ink-200 outline-none focus:border-saffron-500"
+        >
+          <option value="all">All floors</option>
+          {floors.map((f) => {
+            const free = countFree(f.id, tables, groups);
+            return (
+              <option key={f.id} value={f.id}>
+                {f.name} — {free.free} of {free.total} free
+              </option>
+            );
+          })}
+        </select>
+      )}
+
       {byFloor.map(({ floor, tables: ts, groups: gs }) => (
         <div key={floor.id}>
           {floors.length > 1 && (
@@ -418,6 +483,24 @@ function TableList({
   );
 }
 
+/** Free vs total seatable units on a floor — merged groups count once. */
+function countFree(
+  floorId: string | null,
+  tables: RestaurantTable[],
+  groups: TableGroup[],
+): { free: number; total: number; occupied: number } {
+  const loose = tables.filter(
+    (t) => !t.merged_group_id && (floorId === null || t.floor_id === floorId),
+  );
+  const merged = groups.filter((g) => floorId === null || g.floor_id === floorId);
+  const units = [...loose.map((t) => t.status), ...merged.map((g) => g.status)];
+  return {
+    total: units.length,
+    free: units.filter((s) => s === "free").length,
+    occupied: units.filter((s) => s === "occupied").length,
+  };
+}
+
 function TableCard({
   label, capacity, status, zone, merged, occupiedSince, fits, arming, onSeat, onStatus,
 }: {
@@ -431,37 +514,59 @@ function TableCard({
   return (
     <div
       className={cn(
-        "rounded-xl border p-2.5 transition",
+        "overflow-hidden rounded-xl border transition",
+        // The status is carried by a full-width bar, a tinted surface and a
+        // word — not a 10px dot. A host reads this across a counter, at a
+        // glance, while holding a menu.
         "border-ink-800 bg-ink-900",
+        status === "occupied" && "border-status-occupied/40 bg-status-occupied/10",
+        status === "free" && "border-status-free/30 bg-status-free/5",
+        status === "clearing" && "border-status-clearing/40 bg-status-clearing/10",
+        status === "reserved" && "border-status-reserved/40 bg-status-reserved/10",
         arming && !fits && "opacity-30",
-        seatable && "cursor-pointer border-status-free/60 ring-1 ring-status-free/40 hover:bg-status-free/10",
+        seatable && "cursor-pointer ring-2 ring-status-free/60 hover:bg-status-free/15",
       )}
       onClick={seatable ? onSeat : undefined}
       role={seatable ? "button" : undefined}
       tabIndex={seatable ? 0 : undefined}
       onKeyDown={seatable ? (e) => e.key === "Enter" && onSeat() : undefined}
     >
-      <div className="flex items-center gap-2">
-        <span
-          className="size-2.5 shrink-0 rounded-full"
-          style={{ background: TABLE_STATUS_COLOR[status] }}
-          aria-label={TABLE_STATUS_LABEL[status]}
-        />
-        <span className="truncate font-semibold text-white">{label}</span>
-        {merged && (
-          <span className="rounded bg-saffron-500/20 px-1 text-[10px] font-bold uppercase text-saffron-400">
-            merged
-          </span>
-        )}
-        <span className="ml-auto text-xs text-ink-400 tnum">{capacity}p</span>
-      </div>
+      <div className="h-1 w-full" style={{ background: TABLE_STATUS_COLOR[status] }} aria-hidden />
 
-      <div className="mt-1 flex items-center gap-2 text-[11px] text-ink-500">
-        {zone && <span className="truncate">{zone}</span>}
-        {status === "occupied" && occupiedSince && (
-          <span className="ml-auto tnum">{formatElapsed(sat)}</span>
-        )}
-      </div>
+      <div className="p-2.5">
+        <div className="flex items-baseline gap-2">
+          {/* A merged label like "T4+T5" is the whole point of the card — never
+              truncate it to fit a badge. */}
+          <span className="text-base font-bold leading-tight text-white">{label}</span>
+          <span className="ml-auto shrink-0 text-xs text-ink-400 tnum">seats {capacity}</span>
+        </div>
+
+        <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1">
+          {merged && (
+            <span className="rounded bg-saffron-500/20 px-1 text-[10px] font-bold uppercase text-saffron-400">
+              merged
+            </span>
+          )}
+          <span
+            className="rounded px-1.5 py-0.5 text-[11px] font-semibold"
+            style={{
+              color: TABLE_STATUS_COLOR[status],
+              background: `${TABLE_STATUS_COLOR[status]}22`,
+            }}
+          >
+            {TABLE_STATUS_LABEL[status]}
+          </span>
+          {status === "occupied" && occupiedSince && (
+            <span
+              className={cn("text-[11px] font-medium tnum",
+                sat >= 90 ? "text-status-clearing" : "text-ink-400")}
+              title="How long this party has been seated"
+            >
+              {formatElapsed(sat)}
+            </span>
+          )}
+          {zone && <span className="ml-auto truncate text-[11px] text-ink-500">{zone}</span>}
+        </div>
 
       {!arming && (
         <select
@@ -476,6 +581,7 @@ function TableCard({
           ))}
         </select>
       )}
+      </div>
     </div>
   );
 }
@@ -533,3 +639,17 @@ function WalkInDialog({
 
 const dark =
   "w-full rounded-xl border border-ink-800 bg-ink-950 px-3 py-2.5 text-white outline-none focus:border-saffron-500";
+
+function pct(n: number, total: number): number {
+  return total > 0 ? (n / total) * 100 : 0;
+}
+
+/** A colour swatch plus its count — status is never carried by colour alone. */
+function Key({ color, label }: { color: string; label: string }) {
+  return (
+    <span className="flex items-center gap-1.5 text-ink-400">
+      <span className="size-2 rounded-sm" style={{ background: color }} aria-hidden />
+      {label}
+    </span>
+  );
+}

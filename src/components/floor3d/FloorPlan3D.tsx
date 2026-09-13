@@ -315,8 +315,9 @@ export function FloorPlan3D({
 
       <div className="relative flex flex-1 overflow-hidden">
         <div className="relative flex-1">
+          <div className="absolute inset-0">
           {activeFloor ? (
-            <Canvas dpr={[1, 2]} frameloop="demand" gl={{ antialias: true }} camera={{ fov: 50, near: 0.1, far: 200 }}>
+            <Canvas dpr={[1, 2]} gl={{ antialias: true }} camera={{ fov: 50, near: 0.1, far: 200 }}>
               <Suspense fallback={null}>
                 <FloorScene
                   key={activeFloorId}
@@ -342,6 +343,7 @@ export function FloorPlan3D({
           ) : (
             <div className="flex h-full items-center justify-center text-sm text-slate-500">No floors configured yet.</div>
           )}
+          </div>
 
           {heatmapOn && <HeatmapOverlay zones={floorZones} zoneHeat={zoneHeat ?? {}} />}
 

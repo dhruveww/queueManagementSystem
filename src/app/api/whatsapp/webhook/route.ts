@@ -91,8 +91,12 @@ export async function POST(req: NextRequest) {
 
 function verifySignature(raw: string, header: string | null): boolean {
   const secret = process.env.WHATSAPP_APP_SECRET;
-  // No secret configured means local/mock mode — accept, but only outside prod.
-  if (!secret) return process.env.NODE_ENV !== "production";
+  // No secret means mock/local mode. This previously keyed off NODE_ENV, which
+  // is "production" on Vercel previews but *not* on a self-hosted or staging
+  // box — where it silently became an unauthenticated write into
+  // notification_logs and queue_entries. Gate on the provider instead: mock
+  // never receives real Meta callbacks, and any live provider must be signed.
+  if (!secret) return (process.env.WHATSAPP_PROVIDER ?? "mock") === "mock";
   if (!header?.startsWith("sha256=")) return false;
 
   const expected = crypto.createHmac("sha256", secret).update(raw).digest("hex");

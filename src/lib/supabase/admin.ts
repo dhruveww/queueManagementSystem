@@ -1,3 +1,7 @@
+// Hard guard: importing this from a client component is a build error rather
+// than a runtime surprise. The service-role key bypasses RLS entirely, so this
+// is the one module in the app where that mistake must be impossible.
+import "server-only";
 import { createClient } from "@supabase/supabase-js";
 
 /**

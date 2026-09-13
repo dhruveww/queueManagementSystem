@@ -117,6 +117,22 @@ export function JoinForm({ slug, maxPartySize, zoneOptions, estimateLabel, peopl
         <input name="notes" maxLength={200} placeholder="Optional" className={inputClass(false)} />
       </Field>
 
+      {/*
+        Honeypot. A real guest never sees or focuses this; bots fill every input
+        they find, and a non-empty value gets the submission dropped server-side.
+        display:none rather than off-screen positioning on purpose — password
+        managers skip hidden fields but will happily autofill something parked
+        at left:-9999px, which would lock out real people.
+      */}
+      <input
+        type="text"
+        name="company_website"
+        tabIndex={-1}
+        autoComplete="off"
+        aria-hidden="true"
+        style={{ display: "none" }}
+      />
+
       <label className="flex gap-3 rounded-xl bg-ink-50 p-4 text-sm text-ink-700">
         <input
           name="consent" type="checkbox" required

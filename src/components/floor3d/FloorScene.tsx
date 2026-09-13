@@ -94,6 +94,8 @@ export const FloorScene = forwardRef<CameraApi, FloorSceneProps>(function FloorS
     [armedPartySize]
   );
 
+  console.log("[scene]", JSON.stringify({ tables: tables.length, groups: groups.length, bounds }));
+
   const handleDraggingChange = useCallback((d: boolean) => setDragging(d), []);
 
   return (

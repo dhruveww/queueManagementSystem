@@ -24,27 +24,49 @@ const NAMES = [
   "Lakshmi", "Imran", "Tanvi", "Gaurav",
 ];
 
+const DEMO_ORG = "Bengaluru Hospitality Co.";
+
 async function main() {
   console.log("Seeding Baari demo data…");
 
-  const { data: org } = await db.from("organizations")
-    .insert({ name: "Bengaluru Hospitality Co.", gstin: "29ABCDE1234F1Z5" })
+  // Idempotent: drop any previous run of this exact demo tenant first, so the
+  // script can be re-run after a partial failure. Everything else cascades from
+  // the organization row. Scoped to the demo name — it will not touch a real
+  // tenant.
+  //
+  // staff_users.org_id cascades on delete, so existing logins would be unlinked
+  // along with the org. Remember them and re-attach them to the new tenant at
+  // the end, otherwise re-seeding silently locks you out of the dashboard.
+  const { data: stale } = await db.from("organizations").select("id").eq("name", DEMO_ORG);
+  const staleIds = (stale ?? []).map((o) => o.id);
+  let orphanedStaff: { id: string; full_name: string | null; email: string | null; role: string }[] = [];
+
+  if (staleIds.length) {
+    const { data: linked } = await db.from("staff_users")
+      .select("id, full_name, email, role").in("org_id", staleIds);
+    orphanedStaff = linked ?? [];
+    await db.from("organizations").delete().eq("name", DEMO_ORG);
+    console.log(`  removed ${staleIds.length} previous demo tenant(s)`);
+  }
+
+  const { data: org, error: orgErr } = await db.from("organizations")
+    .insert({ name: DEMO_ORG, gstin: "29ABCDE1234F1Z5" })
     .select().single();
-  if (!org) throw new Error("could not create organization");
+  if (orgErr || !org) throw new Error(`could not create organization: ${orgErr?.message ?? "no row"}`);
 
   await db.from("subscriptions").insert({
     org_id: org.id, plan: "pro", status: "active",
     outlet_quota: 2, current_period_end: iso(days(30)),
   });
 
-  const { data: outlet } = await db.from("outlets").insert({
+  const { data: outlet, error: outletErr } = await db.from("outlets").insert({
     org_id: org.id,
     slug: "thindi-house-indiranagar",
     name: "Thindi House · Indiranagar",
     address: "100 Feet Road, Indiranagar, Bengaluru",
     phone: "+918041234567",
   }).select().single();
-  if (!outlet) throw new Error("could not create outlet");
+  if (outletErr || !outlet) throw new Error(`could not create outlet: ${outletErr?.message ?? "no row"}`);
 
   // ---- floors, zones ----------------------------------------------------
   const floorSpecs = [
@@ -74,10 +96,23 @@ async function main() {
   if (!zones) throw new Error("could not create zones");
 
   // ---- tables: a grid per zone, sized like a real room -------------------
+  // Zones sharing a floor are laid out side by side in their own bands —
+  // otherwise two zones land on the same coordinates and the 3D view draws
+  // them stacked on top of each other.
+  const COLS = 3;
+  const SPACING = 2.8;          // metres between table centres
+  const ZONE_GAP = 4;           // metres of empty floor between zones
+
   const tables: Record<string, unknown>[] = [];
   let n = 1;
+  const bandCursor = new Map<string, number>();   // floor_id -> next free z
+
   for (const zone of zones) {
     const count = zone.name === "Private Room" ? 2 : zone.name === "Terrace" ? 8 : 6;
+    const cols = Math.min(COLS, count);
+    const rows = Math.ceil(count / cols);
+    const originZ = bandCursor.get(zone.floor_id) ?? 0;
+
     for (let i = 0; i < count; i++) {
       const capacity = zone.name === "Private Room" ? 10 : i % 4 === 0 ? 2 : i % 3 === 0 ? 6 : 4;
       const shape = capacity <= 2 ? "round" : capacity >= 6 ? "rect" : "square";
@@ -88,14 +123,30 @@ async function main() {
         label: `T${n}`,
         shape,
         capacity,
-        pos_x: (i % 3) * 2.6 - 2.6 + (zones.indexOf(zone) % 2) * 0.4,
-        pos_z: Math.floor(i / 3) * 2.6 - 1.3,
+        pos_x: (i % cols) * SPACING,
+        pos_z: originZ + Math.floor(i / cols) * SPACING,
         rot_y: 0,
         width: shape === "rect" ? 1.8 : 1.1,
         depth: 1.1,
         sort_index: n,
       });
       n++;
+    }
+
+    bandCursor.set(zone.floor_id, originZ + rows * SPACING + ZONE_GAP);
+  }
+
+  // Recentre each floor on the origin so the camera frames it without panning.
+  for (const floor of floors) {
+    const onFloor = tables.filter((t) => t.floor_id === floor.id);
+    if (onFloor.length === 0) continue;
+    const xs = onFloor.map((t) => t.pos_x as number);
+    const zs = onFloor.map((t) => t.pos_z as number);
+    const cx = (Math.min(...xs) + Math.max(...xs)) / 2;
+    const cz = (Math.min(...zs) + Math.max(...zs)) / 2;
+    for (const t of onFloor) {
+      t.pos_x = Math.round(((t.pos_x as number) - cx) * 100) / 100;
+      t.pos_z = Math.round(((t.pos_z as number) - cz) * 100) / 100;
     }
   }
   await db.from("restaurant_tables").insert(tables);
@@ -198,10 +249,20 @@ async function main() {
     });
   }
 
+  // Re-attach any logins the cascade above detached.
+  if (orphanedStaff.length) {
+    await db.from("staff_users").upsert(
+      orphanedStaff.map((s) => ({ ...s, org_id: org.id })),
+    );
+    console.log(`  re-linked ${orphanedStaff.length} existing staff login(s)`);
+  }
+
   console.log(`\nDone. Guest join page: /q/${outlet.slug}`);
-  console.log("Create a staff login in Supabase Auth, then insert a staff_users row:");
-  console.log(`  insert into staff_users (id, org_id, full_name, email, role)`);
-  console.log(`  values ('<auth-user-uuid>', '${org.id}', 'Demo Manager', '<email>', 'owner');`);
+  if (orphanedStaff.length) {
+    console.log("Your existing staff login still works.");
+  } else {
+    console.log("Create a staff login with:  npm run staff -- <email>");
+  }
 }
 
 async function insertChunked(table: string, rows: Record<string, unknown>[]) {

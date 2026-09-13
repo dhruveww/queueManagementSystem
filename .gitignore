@@ -3,8 +3,15 @@ node_modules
 out
 .env
 .env.local
+# any other env variant (.env.production, .env.local.bak, …) — the two exact
+# names above used to be the whole list, so a stray copy would get committed.
+.env.*
+!.env.example
 .vercel
 *.tsbuildinfo
 next-env.d.ts
 .DS_Store
 coverage
+
+# Supabase CLI local state (project ref, pooler URL) — machine-specific
+supabase/.temp/

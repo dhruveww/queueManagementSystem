@@ -22,7 +22,7 @@ const FloorPlan3D = dynamic(
   {
     ssr: false,
     loading: () => (
-      <div className="flex h-[70vh] items-center justify-center gap-2 text-ink-400">
+      <div className="flex h-full items-center justify-center gap-2 text-ink-400">
         <Loader2 className="size-5 animate-spin" aria-hidden />
         Loading floor plan…
       </div>
@@ -61,8 +61,8 @@ export function FloorView(props: Props) {
   }
 
   return (
-    <div className="relative">
-      <div className="flex items-center gap-3 px-4 pt-3">
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="flex shrink-0 items-center gap-3 px-4 pt-3">
         <h1 className="text-xl font-semibold text-white">Floor plan</h1>
         <span
           className={cn("flex items-center gap-1.5 text-xs",
@@ -79,7 +79,7 @@ export function FloorView(props: Props) {
       {error && (
         <div
           role="alert"
-          className="mx-4 mt-3 flex items-center gap-2 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-300"
+          className="mx-4 mt-3 flex shrink-0 items-center gap-2 rounded-lg bg-red-500/10 px-3 py-2 text-sm text-red-300"
         >
           {error}
           <button onClick={() => setError(null)} className="ml-auto text-red-400 hover:text-red-200">
@@ -88,24 +88,28 @@ export function FloorView(props: Props) {
         </div>
       )}
 
-      <FloorPlan3D
-        floors={props.floors}
-        zones={props.zones}
-        tables={tables}
-        groups={groups}
-        waiting={waiting}
-        zoneHeat={props.zoneHeat}
-        canEdit={props.canEdit}
-        onSeat={guard((entryId: string, target: { tableId?: string; groupId?: string }) =>
-          seatGuestAction(entryId, target))}
-        onStatusChange={guard((tableId: string, status: TableStatus) =>
-          setTableStatusAction(tableId, status))}
-        onTableUpsert={guard((table: Partial<RestaurantTable> & { id?: string }) =>
-          upsertTableAction(table))}
-        onTableDelete={guard((tableId: string) => deleteTableAction(tableId))}
-        onMerge={guard((tableIds: string[], label?: string) => mergeTablesAction(tableIds, label))}
-        onUnmerge={guard((groupId: string) => unmergeGroupAction(groupId))}
-      />
+      {/* The scene sizes itself with h-full, so it needs a parent that owns a
+          definite share of the column rather than growing to fit content. */}
+      <div className="min-h-0 flex-1">
+        <FloorPlan3D
+          floors={props.floors}
+          zones={props.zones}
+          tables={tables}
+          groups={groups}
+          waiting={waiting}
+          zoneHeat={props.zoneHeat}
+          canEdit={props.canEdit}
+          onSeat={guard((entryId: string, target: { tableId?: string; groupId?: string }) =>
+            seatGuestAction(entryId, target))}
+          onStatusChange={guard((tableId: string, status: TableStatus) =>
+            setTableStatusAction(tableId, status))}
+          onTableUpsert={guard((table: Partial<RestaurantTable> & { id?: string }) =>
+            upsertTableAction(table))}
+          onTableDelete={guard((tableId: string) => deleteTableAction(tableId))}
+          onMerge={guard((tableIds: string[], label?: string) => mergeTablesAction(tableIds, label))}
+          onUnmerge={guard((groupId: string) => unmergeGroupAction(groupId))}
+        />
+      </div>
     </div>
   );
 }

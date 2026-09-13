@@ -21,6 +21,8 @@ export interface JoinInput {
   zonePref?: ZoneKind | null;
   notes?: string | null;
   source?: "qr" | "walkin" | "staff";
+  /** Salted digest of the caller's IP, for abuse accounting. Never the raw IP. */
+  ipHash?: string | null;
 }
 
 export interface JoinResult {
@@ -98,6 +100,7 @@ export async function joinQueue(input: JoinInput): Promise<JoinResult> {
       est_wait_high_min: est.highMin,
       est_method: est.method,
       source: input.source ?? "qr",
+      ip_hash: input.ipHash ?? null,
     })
     .select("*")
     .single();
@@ -127,14 +130,30 @@ export async function getGuestStatus(token: string): Promise<GuestStatus | null>
   const db = createAdminSupabase();
   const [ticket, idPrefix] = token.split("-");
   if (!ticket || !idPrefix) return null;
+  // The prefix is the first group of the entry's uuid, so it must be 8 hex
+  // digits before it can be used to build the range bounds below.
+  if (!/^[0-9a-f]{8}$/i.test(idPrefix)) return null;
 
+  // This used to filter on ticket_code alone, take the 20 most recent matches
+  // across *every tenant*, and scan them in JS for the id prefix. Since 0004
+  // made ticket codes reusable — A01 is reissued daily, in every outlet — that
+  // window fills with other restaurants' guests, and a guest's own entry falls
+  // out of it within hours while they are still standing in line. The same URL
+  // is the button in their WhatsApp message, so it breaks there too.
+  //
+  // The id prefix is the actual secret, so match on it in the database instead:
+  // every uuid whose first group is `idPrefix` lies in this range, which the
+  // primary key index answers directly. Exact, tenant-agnostic, and unbounded
+  // by how many outlets share a code.
   const { data } = await db
     .from("queue_entries").select("*")
     .eq("ticket_code", ticket)
+    .gte("id", `${idPrefix}-0000-0000-0000-000000000000`)
+    .lte("id", `${idPrefix}-ffff-ffff-ffff-ffffffffffff`)
     .order("joined_at", { ascending: false })
-    .limit(20);
+    .limit(1);
 
-  const entry = (data as QueueEntry[] | null)?.find((e) => e.id.startsWith(idPrefix));
+  const entry = (data as QueueEntry[] | null)?.[0];
   if (!entry) return null;
 
   const found = await getOutletBySlugById(entry.outlet_id);

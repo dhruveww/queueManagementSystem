@@ -1,4 +1,5 @@
 import { NextResponse, type NextRequest } from "next/server";
+import { timingSafeEqual } from "node:crypto";
 import { createAdminSupabase } from "@/lib/supabase/admin";
 import { getOutletBySlug, closeEntry, sendPositionUpdate } from "@/lib/domain/queue";
 import { notifyGuest } from "@/lib/whatsapp/notify";
@@ -21,12 +22,29 @@ import type { Outlet, QueueEntry } from "@/lib/types";
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-export async function GET(req: NextRequest) {
+/**
+ * Fails closed. This used to be `if (secret) { ...check... }`, so an unset or
+ * empty CRON_SECRET — which is exactly what .env.example ships — skipped the
+ * check entirely and left a public GET that sends paid WhatsApp messages, marks
+ * guests no-show, releases their tables and purges PII across every tenant. A
+ * crawler or an <img src> was enough to trigger it.
+ */
+function authorised(req: NextRequest): boolean {
   const secret = process.env.CRON_SECRET;
-  if (secret) {
-    const auth = req.headers.get("authorization");
-    if (auth !== `Bearer ${secret}`) return new NextResponse("unauthorised", { status: 401 });
+  if (!secret) return false;
+  const given = req.headers.get("authorization") ?? "";
+  const expected = `Bearer ${secret}`;
+  // Constant-time, matching how both webhooks already compare signatures.
+  if (given.length !== expected.length) return false;
+  return timingSafeEqual(Buffer.from(given), Buffer.from(expected));
+}
+
+export async function GET(req: NextRequest) {
+  if (!process.env.CRON_SECRET) {
+    console.error("[cron] CRON_SECRET is not set — refusing to run.");
+    return new NextResponse("cron not configured", { status: 500 });
   }
+  if (!authorised(req)) return new NextResponse("unauthorised", { status: 401 });
 
   const db = createAdminSupabase();
   const { data: outletRows } = await db.from("outlets").select("*").eq("is_open", true);

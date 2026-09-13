@@ -103,10 +103,48 @@ order and never cycled; no chart runs more than three categorical series. Never
 build a dual-axis chart — split into two panels (see "By hour of day").
 
 ### The cron heartbeat
-`/api/cron/tick` runs every minute (`vercel.json`) and does what nobody is
-sitting there to do: grace-period nudges and auto no-show, proactive "you're
-getting close" messages, analytics rollups for today and yesterday, and the DPDP
-retention purge. It is the only writer for those transitions.
+`/api/cron/tick` runs every minute and does what nobody is sitting there to do:
+grace-period nudges and auto no-show, proactive "you're getting close" messages,
+analytics rollups for today and yesterday, and the DPDP retention purge. It is
+the only writer for those transitions.
+
+**It is driven from Postgres, not Vercel.** Vercel's Hobby plan caps cron at
+once per day and rejects anything more frequent at deploy time, which would
+silently disable every transition above. `pg_cron` + `pg_net` call the endpoint
+instead — see `supabase/cron-setup.sql`, run once per environment after deploy.
+Do not re-add a `crons` block to `vercel.json`. A side benefit: the heartbeat
+keeps a free Supabase project from pausing after 7 days idle.
+
+The route **fails closed** — no `CRON_SECRET`, no run — because it spends money
+and destroys PII.
+
+### Security posture (migration 0005)
+Three things that are easy to undo by accident:
+
+- **Every function is `REVOKE`d from `anon` and `authenticated`.** Postgres
+  grants EXECUTE to PUBLIC by default and PostgREST exposes `public` functions
+  as `/rest/v1/rpc/<name>`, so before this anyone with the publishable anon key
+  could call `purge_expired_pii()` — an unauthenticated, irreversible,
+  platform-wide PII wipe. Every `.rpc()` call site is server-side through
+  `createAdminSupabase()`, which bypasses grants, so nothing needs a grant.
+  **Exception:** the four RLS helpers (`auth_org_id`, `auth_role`,
+  `can_access_outlet`, `is_manager`) plus `is_service_role` *must* keep EXECUTE
+  for `authenticated` — functions inside a policy expression run as the querying
+  role, and revoking them locks every staff member out of the dashboard.
+- **`anon` has no policy on `outlets`.** RLS is row-level, not column-level, so
+  the old "public profile" policy leaked every tenant's row including `phone`.
+  The guest join page reads it server-side and never needed the policy.
+- **New tables with `outlet_id` still need their three policies** in the
+  `do $$` loop in `0002_rls.sql`, and any new function needs an explicit
+  `revoke execute ... from public, anon, authenticated`.
+
+### Abuse controls
+`joinQueueAction` is public and spends a billed WhatsApp message per request
+against a caller-supplied number, so `src/lib/rateLimit.ts` gates it: a hidden
+honeypot field, a per-instance in-memory window, and an authoritative indexed
+Postgres count (5 joins/hour per device, plus a per-outlet daily ceiling).
+Devices are identified by `queue_entries.ip_hash` — a salted digest, never a raw
+IP, and purged with the rest of the guest's PII.
 
 ## Conventions
 

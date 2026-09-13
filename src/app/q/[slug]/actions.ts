@@ -2,8 +2,9 @@
 
 import { redirect } from "next/navigation";
 import { z } from "zod";
-import { joinQueue, guestToken } from "@/lib/domain/queue";
+import { joinQueue, guestToken, getOutletBySlug } from "@/lib/domain/queue";
 import { normalisePhone } from "@/lib/domain/phone";
+import { clientIp, enforceJoinLimit, hashIp, isHoneypotTripped } from "@/lib/rateLimit";
 
 const JoinSchema = z.object({
   slug: z.string().min(1),
@@ -44,6 +45,23 @@ export async function joinQueueAction(
     return { fieldErrors: { phone: "That doesn't look like an Indian mobile number" } };
   }
 
+  // A bot that filled the hidden field gets a plausible-looking success and no
+  // row, so it has nothing to tune against. Nothing is sent and nothing is
+  // billed; from the attacker's side the endpoint simply looks like it worked.
+  if (isHoneypotTripped(formData.get("company_website"))) {
+    console.warn("[join] honeypot tripped — ignoring submission");
+    redirect("/");
+  }
+
+  // Resolve the outlet before the limiter so the per-outlet ceiling is scoped
+  // to a real restaurant rather than to whatever slug was typed.
+  const found = await getOutletBySlug(parsed.data.slug);
+  if (!found) return { error: "Restaurant not found" };
+
+  const ip = await clientIp();
+  const limit = await enforceJoinLimit(found.outlet.id, ip);
+  if (!limit.ok) return { error: limit.error };
+
   let token: string;
   try {
     const result = await joinQueue({
@@ -53,6 +71,7 @@ export async function joinQueueAction(
       partySize: parsed.data.partySize,
       zonePref: parsed.data.zonePref ?? null,
       notes: parsed.data.notes ?? null,
+      ipHash: hashIp(ip),
     });
     token = guestToken(result.entry);
   } catch (err) {

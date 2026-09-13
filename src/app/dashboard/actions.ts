@@ -53,13 +53,16 @@ export async function seatGuestAction(
 ): Promise<Result> {
   try {
     const entry = await loadEntry(entryId);
-    await assertOutletAccess(entry.outlet_id);
+    const session = await assertOutletAccess(entry.outlet_id);
     // seat_guest is a single transaction: it claims the table and moves the
     // entry together, so two hosts tapping the same table race safely.
+    // The acting host is passed explicitly — the service-role client carries no
+    // auth.uid(), so the function can't derive it (see migration 0004).
     const { error } = await createAdminSupabase().rpc("seat_guest", {
       p_entry: entryId,
       p_table: target.tableId ?? null,
       p_group: target.groupId ?? null,
+      p_seated_by: session.user.id,
     });
     if (error) throw new Error(error.message);
     await audit(entry.outlet_id, "seat_guest", entryId, target);
@@ -207,9 +210,35 @@ export async function upsertTableAction(
     if (!session.canEdit) throw new Error("Manager access required to edit the floor plan");
 
     if (input.id) {
+      // Allowlist, not denylist. This previously stripped only `id` and
+      // `outlet_id` and passed everything else straight to the update, but
+      // `input` is a server-action argument the client fully controls — so a
+      // manager could set `merged_group_id` to a group in another outlet
+      // (nothing in SQL constrains that FK to the same tenant), or rewrite
+      // `status`, `created_at`, or `zone_id`/`floor_id` to a foreign floor.
+      // These are exactly the columns the 3D editor's drag/resize path sends.
+      const EDITABLE = [
+        "pos_x", "pos_z", "rot_y", "width", "depth",
+        "label", "capacity", "shape", "zone_id", "floor_id", "sort_index",
+      ] as const;
+
       const patch = Object.fromEntries(
-        Object.entries(input).filter(([k, v]) => v !== undefined && k !== "id" && k !== "outlet_id"),
+        EDITABLE.filter((k) => input[k] !== undefined).map((k) => [k, input[k]]),
       );
+      if (Object.keys(patch).length === 0) throw new Error("Nothing to update");
+
+      // A zone or floor can only be swapped for one in the same outlet.
+      for (const key of ["zone_id", "floor_id"] as const) {
+        const value = patch[key];
+        if (value == null) continue;
+        const table = key === "zone_id" ? "zones" : "floors";
+        const { data: owner } = await db.from(table)
+          .select("outlet_id").eq("id", value).single();
+        if (!owner || (owner as { outlet_id: string }).outlet_id !== input.outlet_id) {
+          throw new Error(`That ${key === "zone_id" ? "zone" : "floor"} belongs to another outlet`);
+        }
+      }
+
       const { error } = await db.from("restaurant_tables").update(patch).eq("id", input.id);
       if (error) throw new Error(error.message);
     } else {
@@ -246,10 +275,23 @@ export async function deleteTableAction(tableId: string): Promise<Result> {
 export async function mergeTablesAction(tableIds: string[], label?: string): Promise<Result> {
   try {
     const db = createAdminSupabase();
-    const { data } = await db.from("restaurant_tables")
-      .select("outlet_id").in("id", tableIds).limit(1).single();
-    if (!data) throw new Error("Tables not found");
-    const outletId = (data as { outlet_id: string }).outlet_id;
+
+    // `tableIds` is caller-supplied. This used to resolve the outlet from one
+    // arbitrary row (.limit(1) with no ORDER BY) and authorise against that, so
+    // a manager could slip a table belonging to another restaurant into the
+    // array and — depending on which row Postgres happened to return — pass the
+    // access check. Load them all and require a single, authorised outlet.
+    const { data: rows } = await db.from("restaurant_tables")
+      .select("id, outlet_id").in("id", tableIds);
+    const tables = (rows ?? []) as { id: string; outlet_id: string }[];
+
+    const wanted = new Set(tableIds);
+    if (wanted.size < 2) throw new Error("Pick at least two tables to merge");
+    if (tables.length !== wanted.size) throw new Error("Tables not found");
+
+    const outletIds = new Set(tables.map((t) => t.outlet_id));
+    if (outletIds.size !== 1) throw new Error("Every table in a merge must belong to one outlet");
+    const outletId = tables[0].outlet_id;
 
     const session = await assertOutletAccess(outletId);
     if (!session.canEdit) throw new Error("Manager access required to merge tables");
@@ -293,6 +335,12 @@ export async function switchOutletAction(outletId: string) {
   const { cookies } = await import("next/headers");
   await assertOutletAccess(outletId);
   const store = await cookies();
-  store.set("baari_outlet", outletId, { path: "/", maxAge: 60 * 60 * 24 * 365 });
+  store.set("baari_outlet", outletId, {
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+    httpOnly: true,
+    sameSite: "lax",
+    secure: process.env.NODE_ENV === "production",
+  });
   revalidatePath("/dashboard");
 }

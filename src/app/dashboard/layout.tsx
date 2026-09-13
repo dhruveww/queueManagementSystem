@@ -9,8 +9,10 @@ export default async function DashboardLayout({
   const session = await requireStaff();
 
   return (
-    <div className="staff-shell flex min-h-dvh flex-col">
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-3 border-b border-ink-800 px-4 py-3">
+    // h-dvh (not min-h-dvh) so `flex-1` below has a definite height to divide —
+    // the 3D floor canvas sizes itself with h-full and collapses without it.
+    <div className="staff-shell flex h-dvh flex-col overflow-hidden">
+      <header className="flex shrink-0 flex-wrap items-center gap-x-4 gap-y-3 border-b border-ink-800 px-4 py-3">
         <Link href="/dashboard" className="flex items-baseline gap-2">
           <span className="text-lg font-bold tracking-tight text-white">Baari</span>
           {session.isPro && (
@@ -34,7 +36,9 @@ export default async function DashboardLayout({
         <NavTabs isPro={session.isPro} canEdit={session.canEdit} />
       </header>
 
-      <main className="flex-1">{children}</main>
+      {/* min-h-0 lets this shrink below its content so long pages scroll here
+          rather than pushing the shell taller than the viewport. */}
+      <main className="min-h-0 flex-1 overflow-y-auto">{children}</main>
     </div>
   );
 }

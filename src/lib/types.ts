@@ -142,6 +142,63 @@ export interface NotificationLog {
   read_at: string | null;
 }
 
+// ------------------------------------------------------------------- leads
+// Prospects from the marketing site, not tenants — no outlet_id, and not in
+// the RLS do $$ loop. See migration 0007.
+
+export type LeadStatus =
+  | "new" | "proposed" | "approved" | "rescheduling" | "declined" | "expired";
+
+/** What the owner can do from the buttons in their notification email. */
+export type LeadAction = "approve" | "reschedule" | "decline" | "repick";
+
+export interface Lead {
+  id: string;
+  contact_name: string;
+  restaurant_name: string;
+  city: string;
+  phone_e164: string;
+  email: string;
+  outlets_count: number;
+  requests: string | null;
+  pricing_note: string | null;
+  status: LeadStatus;
+  slot_start: string | null;
+  slot_end: string | null;
+  timezone: string;
+  gcal_event_id: string | null;
+  meet_url: string | null;
+  reschedule_count: number;
+  proposed_slots: string[] | null;
+  action_nonce: string;
+  actioned_at: string | null;
+  owner_note: string | null;
+  reminder_sent_at: string | null;
+  source: string;
+  ip_hash: string | null;
+  last_error: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface LeadEvent {
+  id: number;
+  lead_id: string;
+  kind: string;
+  ok: boolean;
+  detail: string | null;
+  created_at: string;
+}
+
+export const LEAD_STATUS_LABEL: Record<LeadStatus, string> = {
+  new: "New",
+  proposed: "Awaiting your call",
+  approved: "Confirmed",
+  rescheduling: "Rescheduling",
+  declined: "Declined",
+  expired: "Expired",
+};
+
 export interface StaffUser {
   id: string;
   org_id: string | null;

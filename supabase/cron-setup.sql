@@ -37,11 +37,13 @@ select cron.schedule(
   'baari-tick',
   '* * * * *',
   $$
-  select net.http_post(
+  -- http_get, not http_post: /api/cron/tick exports GET only, which is also
+  -- what Vercel Cron sends, so the endpoint stays compatible with both drivers.
+  -- Calling it with POST returns 405.
+  select net.http_get(
     url := (select decrypted_secret from vault.decrypted_secrets where name = 'baari_app_url')
            || '/api/cron/tick',
     headers := jsonb_build_object(
-      'Content-Type',  'application/json',
       'Authorization', 'Bearer ' || (select decrypted_secret from vault.decrypted_secrets where name = 'baari_cron_secret')
     ),
     timeout_milliseconds := 55000
@@ -67,6 +69,7 @@ select cron.schedule(
 -- A healthy response body looks like:
 --   {"ok":true,"grace":0,"skipped":0,"nudged":0,"rollups":2,"purged":0}
 --
+-- 405  -> the job is using net.http_post; the route is GET only
 -- 401  -> baari_cron_secret does not match CRON_SECRET in Vercel
 -- 500  -> CRON_SECRET is not set in Vercel at all (the route fails closed)
 -- 404  -> baari_app_url is wrong

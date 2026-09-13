@@ -4,7 +4,11 @@ import { createAdminSupabase } from "@/lib/supabase/admin";
 import { getOutletBySlug, closeEntry, sendPositionUpdate } from "@/lib/domain/queue";
 import { notifyGuest } from "@/lib/whatsapp/notify";
 import { loadEstimateContext, estimateForEntry } from "@/lib/domain/estimate";
-import type { Outlet, QueueEntry } from "@/lib/types";
+import { getCalendar } from "@/lib/google/calendar";
+import { signActionToken } from "@/lib/email/actionToken";
+import { ownerNewLead, leadReschedule } from "@/lib/email/templates";
+import { appUrl, logLeadEvent, sendLeadEmail } from "@/lib/email/send";
+import type { Lead, Outlet, QueueEntry } from "@/lib/types";
 
 /**
  * The heartbeat. Runs every minute on Vercel Cron (see vercel.json) and does
@@ -69,7 +73,97 @@ export async function GET(req: NextRequest) {
   const { data: purged } = await db.rpc("purge_expired_pii");
   report.purged = Number(purged ?? 0);
 
-  return NextResponse.json({ ok: true, ...report });
+  const leads = await runLeadSweep();
+
+  const { data: purgedLeads } = await db.rpc("purge_expired_leads");
+
+  return NextResponse.json({
+    ok: true, ...report, ...leads, purgedLeads: Number(purgedLeads ?? 0),
+  });
+}
+
+/**
+ * Keeps the intro-call pipeline from silting up when the owner is busy.
+ *
+ * Three cheap indexed passes, outlet-independent:
+ *   1. A lead sitting unanswered for 24h gets one reminder to the owner.
+ *   2. Two hours before an unconfirmed slot, release the calendar hold and tell
+ *      the lead. Deliberately NOT auto-approved — a prospect dialling into a
+ *      call the owner never confirmed is a worse outcome than a reschedule.
+ *   3. A reschedule offer nobody picked after 7 days expires quietly.
+ */
+async function runLeadSweep(): Promise<{ leadReminders: number; leadExpired: number }> {
+  const db = createAdminSupabase();
+  const now = Date.now();
+  const out = { leadReminders: 0, leadExpired: 0 };
+
+  // 1. nudge the owner
+  const { data: stale } = await db.from("leads")
+    .select("*")
+    .eq("status", "proposed")
+    .is("reminder_sent_at", null)
+    .lt("created_at", new Date(now - 24 * 3600_000).toISOString())
+    .limit(20);
+
+  for (const row of (stale ?? []) as Lead[]) {
+    const link = (action: "approve" | "reschedule" | "decline") =>
+      `${appUrl()}/m/${signActionToken({ leadId: row.id, action, nonce: row.action_nonce })}`;
+    const mail = ownerNewLead(row, {
+      approve: link("approve"), reschedule: link("reschedule"), decline: link("decline"),
+    });
+    await sendLeadEmail(row.id, "email.owner_reminder", {
+      to: process.env.OWNER_EMAIL ?? "dhruvi0326@gmail.com",
+      subject: `Still waiting — ${mail.subject}`,
+      html: mail.html,
+      text: mail.text,
+      replyTo: row.email,
+    });
+    await db.from("leads").update({ reminder_sent_at: new Date().toISOString() }).eq("id", row.id);
+    out.leadReminders++;
+  }
+
+  // 2. release holds the owner never confirmed
+  const { data: imminent } = await db.from("leads")
+    .select("*")
+    .eq("status", "proposed")
+    .not("slot_start", "is", null)
+    .lt("slot_start", new Date(now + 2 * 3600_000).toISOString())
+    .limit(20);
+
+  for (const row of (imminent ?? []) as Lead[]) {
+    if (row.gcal_event_id) {
+      try {
+        await getCalendar().cancel(row.gcal_event_id);
+      } catch (err) {
+        await logLeadEvent(row.id, "cal.cancel", false, err instanceof Error ? err.message : "failed");
+      }
+    }
+    const nonce = crypto.randomUUID();
+    await db.from("leads").update({
+      status: "expired",
+      slot_start: null, slot_end: null, gcal_event_id: null,
+      actioned_at: new Date().toISOString(),
+      action_nonce: nonce,
+    }).eq("id", row.id).eq("status", "proposed");
+
+    const mail = leadReschedule({ ...row, owner_note: null }, []);
+    await sendLeadEmail(row.id, "email.lead_expired", {
+      to: row.email,
+      subject: "We need to find another time for your Baari call",
+      html: mail.html,
+      text: mail.text,
+    });
+    await logLeadEvent(row.id, "lead.expired", true, "unconfirmed 2h before slot");
+    out.leadExpired++;
+  }
+
+  // 3. reschedule offers nobody took
+  await db.from("leads")
+    .update({ status: "expired", actioned_at: new Date().toISOString() })
+    .eq("status", "rescheduling")
+    .lt("actioned_at", new Date(now - 7 * 24 * 3600_000).toISOString());
+
+  return out;
 }
 
 /**

@@ -64,7 +64,7 @@ export function Faq() {
             <p className="mt-5 text-[14px] leading-relaxed text-slate-400">
               Still stuck?{" "}
               <a
-                href="mailto:dhruvi0326@gmail.com"
+                href="#contact"
                 className="font-semibold text-white underline decoration-saffron-500 decoration-2 underline-offset-4"
               >
                 dhruvi0326@gmail.com

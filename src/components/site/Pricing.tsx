@@ -91,7 +91,7 @@ function PlanPanel({ plan }: { plan: PlanCard }) {
       </ul>
 
       <a
-        href="mailto:dhruvi0326@gmail.com?subject=Baari%20—%20I%20want%20a%20demo"
+        href="#contact"
         className={`mt-8 flex items-center justify-center gap-2 rounded-full py-3.5 text-[14px] font-bold transition-transform duration-300 hover:scale-[1.03] ${
           pro
             ? "bg-saffron-500 text-white shadow-[0_12px_40px_-10px_rgba(255,129,18,0.8)]"

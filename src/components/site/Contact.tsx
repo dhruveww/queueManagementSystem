@@ -2,6 +2,7 @@
 
 import { ArrowUpRight, Mail } from "lucide-react";
 import { Reveal } from "./primitives";
+import { LeadForm } from "./LeadForm";
 
 export function Contact() {
   return (
@@ -25,17 +26,28 @@ export function Contact() {
               set your floor up.
             </p>
 
-            <a
-              href="mailto:dhruvi0326@gmail.com?subject=Baari%20—%20I%20want%20a%20demo&body=Restaurant%3A%0ACity%3A%0AOutlets%3A%0ARough%20covers%20a%20night%3A"
-              className="group mx-auto mt-10 inline-flex items-center gap-3 rounded-full bg-white px-7 py-4 text-[15px] font-extrabold text-[#07090d] transition-transform duration-300 hover:scale-[1.04]"
-            >
-              <Mail className="size-4" aria-hidden />
-              dhruvi0326@gmail.com
-              <ArrowUpRight className="size-4 transition-transform duration-300 group-hover:translate-x-0.5 group-hover:-translate-y-0.5" aria-hidden />
-            </a>
+            <div className="mt-10">
+              <LeadForm />
+            </div>
+
+            {/* The slot picker needs JS. Without it the CTA must still work. */}
+            <noscript>
+              <a
+                href="mailto:dhruvi0326@gmail.com?subject=Baari%20—%20I%20want%20a%20demo&body=Restaurant%3A%0ACity%3A%0AOutlets%3A%0ARough%20covers%20a%20night%3A"
+                className="group mx-auto mt-10 inline-flex items-center gap-3 rounded-full bg-white px-7 py-4 text-[15px] font-extrabold text-[#07090d]"
+              >
+                <Mail className="size-4" aria-hidden />
+                dhruvi0326@gmail.com
+                <ArrowUpRight className="size-4" aria-hidden />
+              </a>
+            </noscript>
 
             <p className="mt-5 text-[12px] text-slate-600">
-              Replies from a human, usually the same day.
+              Or just email{" "}
+              <a href="mailto:dhruvi0326@gmail.com" className="text-slate-400 underline decoration-slate-700 underline-offset-2">
+                dhruvi0326@gmail.com
+              </a>{" "}
+              — replies from a human, usually the same day.
             </p>
           </div>
         </Reveal>

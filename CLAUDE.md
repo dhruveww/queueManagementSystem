@@ -138,6 +138,38 @@ Three things that are easy to undo by accident:
   `do $$` loop in `0002_rls.sql`, and any new function needs an explicit
   `revoke execute ... from public, anon, authenticated`.
 
+### Leads and intro calls
+The marketing site's CTA is a real funnel, not a mailto: `LeadForm` -> a slot
+picker backed by the owner's Google free/busy -> a tentative calendar hold ->
+an email to the owner with Approve / Reschedule / Decline -> an email back to
+the lead. Migration 0007; `leads` is NOT tenant-scoped, so it stays out of the
+`do $$` loop in 0002.
+
+Three things that look odd until you know why:
+
+- **`/m/[token]` and `/b/[token]` mutate nothing on GET.** Gmail's proxy,
+  Outlook SafeLinks and corporate scanners fetch every link in a message, so a
+  GET that approved a meeting would let a security appliance approve it. Both
+  pages render an inert summary; the write is a server-action POST, which
+  scanners don't execute. Never "simplify" this into a GET handler.
+- **`leads.action_nonce` is the revocation lever.** It is part of the signed
+  material in every action link and is rotated on any terminal action, so one
+  click kills the sibling buttons in that email too. There is no used-token
+  table and none is needed.
+- **The unique index on `slot_start`** — not the free/busy re-check — is what
+  actually prevents a double booking. The re-check is a nicety for the error
+  message; the index is the guarantee.
+
+Email and calendar are provider-swapped exactly like WhatsApp
+(`EMAIL_PROVIDER`, `MEETING_CALENDAR`), default `mock`, and degrade to mock with
+a loud error rather than throwing — a lost lead is worse than a lost email.
+Templates live in `lib/email/templates.ts`; the table-layout and inline-CSS
+rules in `lib/email/theme.ts` are not stylistic preference, they are what Gmail
+and Outlook actually render.
+
+> Google's OAuth consent screen must be **published**. While it says "Testing",
+> refresh tokens expire after 7 days and the booking flow dies silently.
+
 ### Abuse controls
 `joinQueueAction` is public and spends a billed WhatsApp message per request
 against a caller-supplied number, so `src/lib/rateLimit.ts` gates it: a hidden

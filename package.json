@@ -2,7 +2,7 @@
   "name": "baari",
   "version": "0.1.0",
   "private": true,
-  "description": "Baari — WhatsApp-first virtual queuing and floor management for Indian restaurants.",
+  "description": "Baari \u2014 WhatsApp-first virtual queuing and floor management for Indian restaurants.",
   "scripts": {
     "dev": "next dev",
     "build": "next build",
@@ -15,7 +15,8 @@
     "db:reset": "supabase db reset",
     "db:types": "supabase gen types typescript --local > src/lib/supabase/database.types.ts",
     "seed": "node --env-file=.env.local --import tsx scripts/seed.ts",
-    "staff": "node --env-file=.env.local --import tsx scripts/create-staff.ts"
+    "staff": "node --env-file=.env.local --import tsx scripts/create-staff.ts",
+    "google:auth": "node --env-file=.env.local --import tsx scripts/google-oauth.ts"
   },
   "dependencies": {
     "@react-three/drei": "^10.7.6",
